@@ -179,6 +179,16 @@ func TestApplyCRDuringCRDFinalization(t *testing.T) {
 	err = apiExtensionClient.ApiextensionsV1().CustomResourceDefinitions().Delete(t.Context(), noxuDefinition.Name, metav1.DeleteOptions{})
 	require.NoError(t, err)
 
+	// Wait for the CRD to be in terminating state
+	err = wait.PollUntilContextTimeout(t.Context(), 100*time.Millisecond, wait.ForeverTestTimeout, true, func(ctx context.Context) (bool, error) {
+		crd, err := apiExtensionClient.ApiextensionsV1().CustomResourceDefinitions().Get(ctx, noxuDefinition.Name, metav1.GetOptions{})
+		if err != nil {
+			return false, err
+		}
+		return crd.DeletionTimestamp != nil, nil
+	})
+	require.NoError(t, err, "CRD should have deletion timestamp set")
+
 	// Try to create a CR using SSA. This should fail due to the CRD validation
 	ns := "not-the-default"
 	name := "foo123"
