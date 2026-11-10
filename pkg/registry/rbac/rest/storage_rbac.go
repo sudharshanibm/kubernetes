@@ -24,6 +24,7 @@ import (
 
 	"k8s.io/klog/v2"
 
+	corev1 "k8s.io/api/core/v1"
 	rbacapiv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -208,6 +209,14 @@ func (listedObjects[T]) Delete(string, string, types.UID) error {
 
 func ensureRBACPolicy(p *PolicyData, client clientset.Interface) (done bool, err error) {
 	failedReconciliation := false
+	// Writes to Roles and RoleBindings advance etcd's global revision without
+	// advancing the Namespaces watch cache. Avoid serial freshness waits for the
+	// same namespace before every bootstrap object creation. Never retain these
+	// existence probes across reconciliation attempts.
+	namespaceClient := &bootstrapNamespaceClient{
+		NamespaceInterface: client.CoreV1().Namespaces(),
+		existing:           map[string]*corev1.Namespace{},
+	}
 	// Make sure etcd is responding before we start reconciling
 	clusterRoleList, err := client.RbacV1().ClusterRoles().List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
@@ -327,7 +336,7 @@ func ensureRBACPolicy(p *PolicyData, client clientset.Interface) (done bool, err
 		for _, role := range roles {
 			opts := reconciliation.ReconcileRoleOptions{
 				Role:    reconciliation.RoleRuleOwner{Role: &role},
-				Client:  reconciliation.RoleModifier{Client: client.RbacV1(), NamespaceClient: client.CoreV1().Namespaces()},
+				Client:  reconciliation.RoleModifier{Client: client.RbacV1(), NamespaceClient: namespaceClient},
 				Confirm: true,
 			}
 			// ServiceUnavailble error is returned when the API server is blocked by storage version updates
@@ -359,7 +368,7 @@ func ensureRBACPolicy(p *PolicyData, client clientset.Interface) (done bool, err
 		for _, roleBinding := range roleBindings {
 			opts := reconciliation.ReconcileRoleBindingOptions{
 				RoleBinding: reconciliation.RoleBindingAdapter{RoleBinding: &roleBinding},
-				Client:      reconciliation.RoleBindingClientAdapter{Client: client.RbacV1(), NamespaceClient: client.CoreV1().Namespaces()},
+				Client:      reconciliation.RoleBindingClientAdapter{Client: client.RbacV1(), NamespaceClient: namespaceClient},
 				Confirm:     true,
 			}
 			// ServiceUnavailble error is returned when the API server is blocked by storage version updates
